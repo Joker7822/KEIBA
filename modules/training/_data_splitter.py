@@ -16,11 +16,11 @@ class DataSplitter:
         self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
             self.__train_data, test_size=valid_size
         )
-        self.__lgb_train_optuna = lgb_o.Dataset(
+        self.__lgb_train_optuna = lgb.Dataset(
             self.__train_data_optuna.drop(['rank', 'date', ResultsCols.TANSHO_ODDS], axis=1).values,
             self.__train_data_optuna['rank']
         )
-        self.__lgb_valid_optuna = lgb_o.Dataset(
+        self.__lgb_valid_optuna = lgb.Dataset(
             self.__valid_data_optuna.drop(['rank', 'date', ResultsCols.TANSHO_ODDS], axis=1).values,
             self.__valid_data_optuna['rank']
         )
