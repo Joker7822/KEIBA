@@ -94,17 +94,19 @@ jobs:
           RUN_MODE: ${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode }}
           FROM_DATE: ${{ steps.range_manual.outputs.from_date || steps.range_auto.outputs.from_date }}
           TO_DATE: ${{ steps.range_manual.outputs.to_date || steps.range_auto.outputs.to_date }}
-          DOWNLOAD_RACE_HTML: ${{ github.event_name == 'workflow_dispatch' && inputs.download_race_html || 'false' }}
+          DOWNLOAD_RACE_HTML: ${{ (github.event_name == 'workflow_dispatch' && inputs.download_race_html) && 'true' || 'false' }}
         run: |
           set -euo pipefail
           echo "mode=${RUN_MODE}"
           echo "from=${FROM_DATE}"
           echo "to=${TO_DATE}"
+          echo "download_race_html=${DOWNLOAD_RACE_HTML}"
 
           CMD=(python run_scrape_date_range.py --from-date "$FROM_DATE" --to-date "$TO_DATE")
           if [ "$DOWNLOAD_RACE_HTML" = "true" ]; then
             CMD+=(--download-race-html)
           fi
+
           printf 'command: %q ' "${CMD[@]}"
           echo
           "${CMD[@]}"
@@ -133,17 +135,25 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Commit state files
+      - name: Commit updated data and state files
         if: ${{ success() }}
         shell: bash
+        env:
+          RUN_MODE: ${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode }}
+          FROM_DATE: ${{ steps.range_manual.outputs.from_date || steps.range_auto.outputs.from_date }}
+          TO_DATE: ${{ steps.range_manual.outputs.to_date || steps.range_auto.outputs.to_date }}
         run: |
           set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/state/*
+
+          git add -A .github/state/ data/
+
           if git diff --cached --quiet; then
-            echo "No state changes"
+            echo "No data/state changes"
             exit 0
           fi
-          git commit -m "chore: update scrape state"
+
+          git commit -m "chore: update scrape data (${RUN_MODE} ${FROM_DATE}..${TO_DATE})"
           git push
