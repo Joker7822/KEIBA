@@ -1,7 +1,10 @@
 import pandas as pd
 import lightgbm as lgb
 from sklearn.metrics import roc_auc_score
-import optuna.integration.lightgbm as lgb_o
+def tune_hyper_params(self, datasets: DataSplitter):
+    import optuna.integration.lightgbm as lgb_o
+    params = {'objective': 'binary'}
+    ...
 
 from ._data_splitter import DataSplitter
 
