@@ -1,4 +1,4 @@
-import optuna.integration.lightgbm as lgb_o
+import lightgbm as lgb
 
 from modules.constants import ResultsCols
 
