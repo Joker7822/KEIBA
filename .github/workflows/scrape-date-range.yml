@@ -25,8 +25,6 @@ on:
         required: true
         default: false
         type: boolean
-  schedule:
-    - cron: '17 20 * * *' # 毎日 05:17 JST
 
 permissions:
   contents: write
@@ -67,7 +65,7 @@ jobs:
 
       - name: Resolve date range (manual override)
         id: range_manual
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.from_date != '' && inputs.to_date != '' }}
+        if: ${{ inputs.from_date != '' && inputs.to_date != '' }}
         shell: bash
         run: |
           echo "run_mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
@@ -78,51 +76,102 @@ jobs:
 
       - name: Resolve date range (auto/full/incremental)
         id: range_auto
-        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.from_date != '' && inputs.to_date != '') }}
+        if: ${{ !(inputs.from_date != '' && inputs.to_date != '') }}
         shell: bash
         run: |
-          MODE="auto"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            MODE="${{ inputs.mode }}"
-          fi
+          MODE="${{ inputs.mode }}"
           python scripts/resolve_scrape_range.py --mode "$MODE"
 
-      - name: Run scraper
-        id: scrape
+      - name: Build kaisai date list
+        id: build_dates
         shell: bash
         env:
-          RUN_MODE: ${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode }}
           FROM_DATE: ${{ steps.range_manual.outputs.from_date || steps.range_auto.outputs.from_date }}
           TO_DATE: ${{ steps.range_manual.outputs.to_date || steps.range_auto.outputs.to_date }}
-          DOWNLOAD_RACE_HTML: ${{ (github.event_name == 'workflow_dispatch' && inputs.download_race_html) && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          echo "mode=${RUN_MODE}"
-          echo "from=${FROM_DATE}"
-          echo "to=${TO_DATE}"
-          echo "download_race_html=${DOWNLOAD_RACE_HTML}"
+          mkdir -p .github/state .github/tmp
+          python - <<'PY'
+          import os
+          from modules import preparing
 
-          CMD=(python run_scrape_date_range.py --from-date "$FROM_DATE" --to-date "$TO_DATE")
-          if [ "$DOWNLOAD_RACE_HTML" = "true" ]; then
-            CMD+=(--download-race-html)
-          fi
+          from_date = os.environ["FROM_DATE"]
+          to_date = os.environ["TO_DATE"]
+          dates = preparing.scrape_kaisai_date(from_date, to_date)
 
-          printf 'command: %q ' "${CMD[@]}"
-          echo
-          "${CMD[@]}"
+          out_path = ".github/tmp/kaisai_dates.txt"
+          with open(out_path, "w", encoding="utf-8") as f:
+              for d in dates:
+                  f.write(f"{d}\n")
 
-      - name: Write persistent state
-        if: ${{ success() }}
+          print(f"kaisai_dates_count={len(dates)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fo:
+              fo.write(f"count={len(dates)}\n")
+          PY
+
+      - name: Scrape each kaisai_date and push immediately
         shell: bash
         env:
           RUN_MODE: ${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode }}
-          FROM_DATE: ${{ steps.range_manual.outputs.from_date || steps.range_auto.outputs.from_date }}
-          TO_DATE: ${{ steps.range_manual.outputs.to_date || steps.range_auto.outputs.to_date }}
+          DOWNLOAD_RACE_HTML: ${{ inputs.download_race_html }}
         run: |
-          python scripts/write_scrape_state.py \
-            --run-mode "$RUN_MODE" \
-            --from-date "$FROM_DATE" \
-            --to-date "$TO_DATE"
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+
+          if [ ! -f .github/tmp/kaisai_dates.txt ]; then
+            echo "kaisai date list not found"
+            exit 1
+          fi
+
+          if [ ! -s .github/tmp/kaisai_dates.txt ]; then
+            echo "No kaisai dates found. Nothing to do."
+            exit 0
+          fi
+
+          while IFS= read -r kaisai_date || [ -n "$kaisai_date" ]; do
+            [ -z "$kaisai_date" ] && continue
+
+            from_date_fmt="$(echo "$kaisai_date" | sed -E 's#([0-9]{4})([0-9]{2})([0-9]{2})#\1/\2/\3#')"
+            to_date_fmt="$from_date_fmt"
+
+            echo "========================================"
+            echo "Processing kaisai_date=${kaisai_date}"
+            echo "from=${from_date_fmt}"
+            echo "to=${to_date_fmt}"
+            echo "download_race_html=${DOWNLOAD_RACE_HTML}"
+            echo "========================================"
+
+            CMD=(python run_scrape_date_range.py --from-date "$from_date_fmt" --to-date "$to_date_fmt")
+            if [ "${DOWNLOAD_RACE_HTML}" = "true" ]; then
+              CMD+=(--download-race-html)
+            fi
+
+            printf 'command: %q ' "${CMD[@]}"
+            echo
+            "${CMD[@]}"
+
+            python scripts/write_scrape_state.py \
+              --run-mode "$RUN_MODE" \
+              --from-date "$from_date_fmt" \
+              --to-date "$to_date_fmt"
+
+            git add -A .github/state/ data/
+
+            if git diff --cached --quiet; then
+              echo "No changes for ${kaisai_date}. Skip commit/push."
+              continue
+            fi
+
+            git commit -m "chore: update scrape data (${RUN_MODE} ${kaisai_date})"
+
+            git pull --rebase origin "$BRANCH_NAME"
+            git push origin "HEAD:${BRANCH_NAME}"
+
+          done < .github/tmp/kaisai_dates.txt
 
       - name: Upload artifacts
         if: ${{ always() }}
@@ -130,30 +179,9 @@ jobs:
         with:
           name: scrape-${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode || 'unknown' }}-${{ steps.range_manual.outputs.from_date_compact || steps.range_auto.outputs.from_date_compact || 'na' }}-${{ steps.range_manual.outputs.to_date_compact || steps.range_auto.outputs.to_date_compact || 'na' }}
           path: |
-            data/tmp/**/*.csv
             .github/state/*
+            .github/tmp/kaisai_dates.txt
+            data/tmp/**/*.csv
+            data/tmp/debug_race_list/**/*.html
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Commit updated data and state files
-        if: ${{ success() }}
-        shell: bash
-        env:
-          RUN_MODE: ${{ steps.range_manual.outputs.run_mode || steps.range_auto.outputs.run_mode }}
-          FROM_DATE: ${{ steps.range_manual.outputs.from_date || steps.range_auto.outputs.from_date }}
-          TO_DATE: ${{ steps.range_manual.outputs.to_date || steps.range_auto.outputs.to_date }}
-        run: |
-          set -euo pipefail
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A .github/state/ data/
-
-          if git diff --cached --quiet; then
-            echo "No data/state changes"
-            exit 0
-          fi
-
-          git commit -m "chore: update scrape data (${RUN_MODE} ${FROM_DATE}..${TO_DATE})"
-          git push
