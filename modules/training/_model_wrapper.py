@@ -1,10 +1,7 @@
 import pandas as pd
 import lightgbm as lgb
 from sklearn.metrics import roc_auc_score
-def tune_hyper_params(self, datasets: DataSplitter):
-    import optuna.integration.lightgbm as lgb_o
-    params = {'objective': 'binary'}
-    ...
+import optuna.integration.lightgbm as lgb_o
 
 from ._data_splitter import DataSplitter
 
@@ -13,35 +10,35 @@ class ModelWrapper:
     """
     モデルのハイパーパラメータチューニング・学習の処理が記述されたクラス。
     """
+
     def __init__(self):
         self.__lgb_model = lgb.LGBMClassifier(objective='binary')
         self.__feature_importance = None
 
-    def tune_hyper_params(self, datasets: DataSplitter):
+    def tune_hyper_params(self, datasets: "DataSplitter"):
         """
         optunaによるチューニングを実行。
         """
-
         params = {'objective': 'binary'}
 
-        # チューニング実行
         lgb_clf_o = lgb_o.train(
             params,
             datasets.lgb_train_optuna,
             valid_sets=(datasets.lgb_train_optuna, datasets.lgb_valid_optuna),
             callbacks=[
-                lgb.callback.log_evaluation(period=100),  # 100イテレーションごとに評価結果を出力
-                lgb.callback.early_stopping(stopping_rounds=10)  # 早期停止パラメータ、verboseはデフォルトtrueのため指定不要
-                ],
-            optuna_seed=100 # optunaのseed固定
-            )
+                lgb.callback.log_evaluation(period=100),
+                lgb.callback.early_stopping(stopping_rounds=10)
+            ],
+            optuna_seed=100
+        )
 
-        # num_iterationsとearly_stopping_roundは今は使わないので削除
-        tunedParams = {
-            k: v for k, v in lgb_clf_o.params.items() if k not in ['num_iterations', 'early_stopping_round']
-            }
+        tuned_params = {
+            k: v
+            for k, v in lgb_clf_o.params.items()
+            if k not in ['num_iterations', 'early_stopping_round']
+        }
 
-        self.__lgb_model.set_params(**tunedParams)
+        self.__lgb_model.set_params(**tuned_params)
 
     @property
     def params(self):
@@ -53,22 +50,26 @@ class ModelWrapper:
         """
         self.__lgb_model.set_params(**ex_params)
 
-    def train(self, datasets: DataSplitter):
-        # 学習
+    def train(self, datasets: "DataSplitter"):
+        """
+        学習を実行。
+        """
         self.__lgb_model.fit(datasets.X_train.values, datasets.y_train.values)
-        # AUCを計算して出力
+
         auc_train = roc_auc_score(
-            datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1]
-            )
+            datasets.y_train,
+            self.__lgb_model.predict_proba(datasets.X_train)[:, 1]
+        )
         auc_test = roc_auc_score(
             datasets.y_test,
             self.__lgb_model.predict_proba(datasets.X_test)[:, 1]
-            )
-        # 特徴量の重要度を記憶しておく
+        )
+
         self.__feature_importance = pd.DataFrame({
             "features": datasets.X_train.columns,
             "importance": self.__lgb_model.feature_importances_
-            }).sort_values("importance", ascending=False)
+        }).sort_values("importance", ascending=False)
+
         print('AUC: {:.3f}(train), {:.3f}(test)'.format(auc_train, auc_test))
 
     @property
