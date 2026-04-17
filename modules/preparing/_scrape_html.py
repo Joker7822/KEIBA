@@ -4,10 +4,11 @@ import pandas as pd
 import time
 import os
 from typing import Optional
+
 from tqdm.auto import tqdm
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, FeatureNotFound
 
 from modules.constants import UrlPaths, LocalPaths
 
@@ -20,6 +21,13 @@ _DEFAULT_HEADERS = {
     ),
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
 }
+
+
+def _ensure_dirs() -> None:
+    os.makedirs(LocalPaths.HTML_RACE_DIR, exist_ok=True)
+    os.makedirs(LocalPaths.HTML_HORSE_DIR, exist_ok=True)
+    os.makedirs(LocalPaths.HTML_PED_DIR, exist_ok=True)
+    os.makedirs(LocalPaths.MASTER_DIR, exist_ok=True)
 
 
 def _fetch_html(
@@ -48,6 +56,14 @@ def _fetch_html(
     raise last_error
 
 
+def _make_soup(html: bytes) -> BeautifulSoup:
+    try:
+        return BeautifulSoup(html, "lxml")
+    except FeatureNotFound:
+        print("lxml is not available. Falling back to html.parser")
+        return BeautifulSoup(html, "html.parser")
+
+
 def _is_valid_race_id(race_id: str) -> bool:
     return bool(re.fullmatch(r"\d{12}", str(race_id)))
 
@@ -58,11 +74,11 @@ def _is_valid_horse_id(horse_id: str) -> bool:
 
 def scrape_html_race(race_id_list: list, skip: bool = True):
     """
-    netkeiba.com の race ページの html をスクレイピングして data/html/race に保存する。
-    skip=True の場合、既存 bin はスキップ。
-    返り値: 新しく保存した html のファイルパス一覧
+    netkeiba.comのraceページのhtmlをスクレイピングしてdata/html/raceに保存する関数。
+    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+    返り値：新しくスクレイピングしたhtmlのファイルパス
     """
-    os.makedirs(LocalPaths.HTML_RACE_DIR, exist_ok=True)
+    _ensure_dirs()
     updated_html_path_list = []
 
     for race_id in tqdm(race_id_list):
@@ -93,7 +109,7 @@ def scrape_html_race(race_id_list: list, skip: bool = True):
             print(f"race_id {race_id} skipped. Unexpected error: {exc}")
             continue
 
-        soup = BeautifulSoup(html, "lxml")
+        soup = _make_soup(html)
         data_intro_exists = bool(soup.find("div", attrs={"class": "data_intro"}))
 
         if not data_intro_exists:
@@ -110,11 +126,11 @@ def scrape_html_race(race_id_list: list, skip: bool = True):
 
 def scrape_html_horse(horse_id_list: list, skip: bool = True):
     """
-    netkeiba.com の horse ページの html をスクレイピングして data/html/horse に保存する。
-    skip=True の場合、既存 bin はスキップ。
-    返り値: 新しく保存した html のファイルパス一覧
+    netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
+    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+    返り値：新しくスクレイピングしたhtmlのファイルパス
     """
-    os.makedirs(LocalPaths.HTML_HORSE_DIR, exist_ok=True)
+    _ensure_dirs()
     updated_html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
@@ -155,11 +171,11 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
 
 def scrape_html_ped(horse_id_list: list, skip: bool = True):
     """
-    netkeiba.com の horse/ped ページの html をスクレイピングして data/html/ped に保存する。
-    skip=True の場合、既存 bin はスキップ。
-    返り値: 新しく保存した html のファイルパス一覧
+    netkeiba.comのhorse/pedページのhtmlをスクレイピングしてdata/html/pedに保存する関数。
+    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+    返り値：新しくスクレイピングしたhtmlのファイルパス
     """
-    os.makedirs(LocalPaths.HTML_PED_DIR, exist_ok=True)
+    _ensure_dirs()
     updated_html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
@@ -200,9 +216,13 @@ def scrape_html_ped(horse_id_list: list, skip: bool = True):
 
 def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     """
-    horse ページの html をスクレイピングし、取得日時を
-    data/master/horse_results_updated_at.csv に保存する。
+    netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
+    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+    返り値：新しくスクレイピングしたhtmlのファイルパス
+    また、horse_idごとに、最後にスクレイピングした日付を記録し、data/master/horse_results_updated_at.csvに保存する。
     """
+    _ensure_dirs()
+
     print("scraping")
     updated_html_path_list = scrape_html_horse(horse_id_list, skip)
 
@@ -218,7 +238,7 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     if not os.path.isfile(LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH):
         pd.DataFrame(columns=["horse_id", "updated_at"]).to_csv(
             LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
-            index=None
+            index=None,
         )
 
     master = pd.read_csv(LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH, dtype=object)
@@ -226,7 +246,7 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     new_master.loc[new_master["horse_id"].isin(horse_id_list), "updated_at"] = now
     new_master[["horse_id", "updated_at"]].to_csv(
         LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
-        index=None
+        index=None,
     )
 
     return updated_html_path_list
