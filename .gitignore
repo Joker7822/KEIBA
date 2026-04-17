@@ -1,13 +1,6 @@
 # Pythonキャッシュ
 *.pyc
 
-# データは追跡対象にする
-# （即時PUSHのため、data 配下の csv / bin / pickle は除外しない）
-
-# モデルは容量が大きくなりやすいため除外
-models/**/*.pickle
-*.pickle
-
 .DS_Store
 playground.ipynb
 
