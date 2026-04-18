@@ -144,6 +144,9 @@ jobs:
           while IFS= read -r kaisai_date || [ -n "$kaisai_date" ]; do
             [ -z "$kaisai_date" ] && continue
 
+            git fetch origin "$BRANCH_NAME"
+            git reset --hard "origin/$BRANCH_NAME"
+
             from_date_fmt="$(echo "$kaisai_date" | sed -E 's#([0-9]{4})([0-9]{2})([0-9]{2})#\1/\2/\3#')"
             to_date_fmt="$from_date_fmt"
 
@@ -169,6 +172,26 @@ jobs:
             echo
             "${CMD[@]}"
 
+            RACE_CSV="data/tmp/race_id_list_${kaisai_date}_${kaisai_date}.csv"
+
+            if [ ! -f "$RACE_CSV" ]; then
+              echo "Race CSV not found for ${kaisai_date}. Skip commit/push."
+              continue
+            fi
+
+            RACE_COUNT="$(
+              python -c "import pandas as pd; \
+              from pathlib import Path; \
+              p = Path(r'${RACE_CSV}'); \
+            print(len(pd.read_csv(p)) if p.exists() else 0)"
+            )"
+            echo "race_id_count=${RACE_COUNT}"
+
+            if [ "${RACE_COUNT}" = "0" ]; then
+              echo "No race_id found for ${kaisai_date}. Skip state update and push."
+              continue
+            fi
+
             python scripts/write_scrape_state.py \
               --run-mode "$RUN_MODE" \
               --from-date "$from_date_fmt" \
@@ -182,8 +205,6 @@ jobs:
             fi
 
             git commit -m "chore: update decomposed main flow (${RUN_MODE} ${kaisai_date})"
-
-            git pull --rebase origin "$BRANCH_NAME"
             git push origin "HEAD:${BRANCH_NAME}"
 
           done < .github/tmp/kaisai_dates.txt
