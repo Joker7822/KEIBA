@@ -144,9 +144,6 @@ jobs:
           while IFS= read -r kaisai_date || [ -n "$kaisai_date" ]; do
             [ -z "$kaisai_date" ] && continue
 
-            git fetch origin "$BRANCH_NAME"
-            git reset --hard "origin/$BRANCH_NAME"
-
             from_date_fmt="$(echo "$kaisai_date" | sed -E 's#([0-9]{4})([0-9]{2})([0-9]{2})#\1/\2/\3#')"
             to_date_fmt="$from_date_fmt"
 
@@ -172,30 +169,97 @@ jobs:
             echo
             "${CMD[@]}"
 
-            RACE_CSV="data/tmp/race_id_list_${kaisai_date}_${kaisai_date}.csv"
-
-            if [ ! -f "$RACE_CSV" ]; then
-              echo "Race CSV not found for ${kaisai_date}. Skip commit/push."
-              continue
-            fi
-
-            RACE_COUNT="$(
-              python -c "import pandas as pd; \
-              from pathlib import Path; \
-              p = Path(r'${RACE_CSV}'); \
-            print(len(pd.read_csv(p)) if p.exists() else 0)"
-            )"
-            echo "race_id_count=${RACE_COUNT}"
-
-            if [ "${RACE_COUNT}" = "0" ]; then
-              echo "No race_id found for ${kaisai_date}. Skip state update and push."
-              continue
-            fi
-
             python scripts/write_scrape_state.py \
               --run-mode "$RUN_MODE" \
               --from-date "$from_date_fmt" \
               --to-date "$to_date_fmt"
+
+            echo "Merging kaisai_date and race_id_list CSV files..."
+            python - <<'PY'
+            import glob
+            import os
+            import pandas as pd
+
+            tmp_dir = os.path.join("data", "tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+
+            def merge_and_cleanup(pattern: str, column_name: str, merged_filename: str) -> None:
+                paths = sorted(glob.glob(os.path.join(tmp_dir, pattern)))
+                if not paths:
+                    return
+
+                frames = []
+                used_paths = []
+
+                for path in paths:
+                    try:
+                        df = pd.read_csv(path, dtype=str)
+                    except Exception as exc:
+                        print(f"skip unreadable file: {path} ({exc})")
+                        continue
+
+                    if column_name not in df.columns:
+                        print(f"skip file without column {column_name}: {path}")
+                        continue
+
+                    s = (
+                        df[column_name]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                    )
+                    s = s[s != ""]
+                    if s.empty:
+                        used_paths.append(path)
+                        continue
+
+                    frames.append(pd.DataFrame({column_name: s}))
+                    used_paths.append(path)
+
+                merged_path = os.path.join(tmp_dir, merged_filename)
+
+                if os.path.exists(merged_path):
+                    try:
+                        current_df = pd.read_csv(merged_path, dtype=str)
+                        if column_name in current_df.columns:
+                            s = (
+                                current_df[column_name]
+                                .dropna()
+                                .astype(str)
+                                .str.strip()
+                            )
+                            s = s[s != ""]
+                            if not s.empty:
+                                frames.insert(0, pd.DataFrame({column_name: s}))
+                    except Exception as exc:
+                        print(f"failed to read existing merged file {merged_path}: {exc}")
+
+                if not frames:
+                    return
+
+                merged_df = (
+                    pd.concat(frames, ignore_index=True)
+                    .drop_duplicates(subset=[column_name], keep="first")
+                    .sort_values(by=[column_name], kind="stable")
+                    .reset_index(drop=True)
+                )
+                merged_df.to_csv(merged_path, index=False, encoding="utf-8-sig")
+                print(f"merged: {merged_path} ({len(merged_df)} rows)")
+
+                for path in used_paths:
+                    if os.path.abspath(path) == os.path.abspath(merged_path):
+                        continue
+                    try:
+                        os.remove(path)
+                        print(f"removed: {path}")
+                    except FileNotFoundError:
+                        pass
+                    except Exception as exc:
+                        print(f"failed to remove {path}: {exc}")
+
+            merge_and_cleanup("kaisai_date_*.csv", "kaisai_date", "kaisai_date_all.csv")
+            merge_and_cleanup("race_id_list_*.csv", "race_id", "race_id_list_all.csv")
+            PY
 
             git add -A .github/state/ data/
 
@@ -205,6 +269,8 @@ jobs:
             fi
 
             git commit -m "chore: update decomposed main flow (${RUN_MODE} ${kaisai_date})"
+
+            git pull --rebase origin "$BRANCH_NAME"
             git push origin "HEAD:${BRANCH_NAME}"
 
           done < .github/tmp/kaisai_dates.txt
