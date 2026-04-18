@@ -33,10 +33,6 @@ _DEFAULT_HEADERS = {
 
 
 def _parse_flexible_date(value: str, *, is_end: bool = False) -> datetime.date:
-    """
-    YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD / YYYY-MM / YYYY/MM を受け付ける。
-    月指定のみの場合、開始側は月初、終了側は月末で解釈する。
-    """
     if not isinstance(value, str):
         raise TypeError("date value must be str")
 
@@ -76,6 +72,14 @@ def _normalize_race_ids(race_id_list: Iterable[str]) -> List[str]:
     return sorted({str(x) for x in race_id_list if re.fullmatch(r"\d{12}", str(x))})
 
 
+def _filter_race_ids_by_kaisai_date(race_ids: Iterable[str], kaisai_date: str) -> List[str]:
+    return sorted({
+        str(race_id)
+        for race_id in race_ids
+        if re.fullmatch(r"\d{12}", str(race_id)) and str(race_id).startswith(str(kaisai_date))
+    })
+
+
 def _fetch_html(url: str, *, timeout: int = 30, max_attempt: int = 3, sleep_seconds: float = 1.0) -> bytes:
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempt + 1):
@@ -95,9 +99,6 @@ def _fetch_html(url: str, *, timeout: int = 30, max_attempt: int = 3, sleep_seco
 
 
 def scrape_kaisai_date(from_: str, to_: str, sleep_seconds: float = 1.0):
-    """
-    開始日 from_ から終了日 to_ まで（両端含む）のレース開催日一覧を返す。
-    """
     start_date = _parse_flexible_date(from_, is_end=False)
     end_date = _parse_flexible_date(to_, is_end=True)
     if start_date > end_date:
@@ -221,9 +222,6 @@ def scrape_race_id_list(
     continue_on_error: bool = True,
     dedupe: bool = True,
 ):
-    """
-    開催日を yyyymmdd の文字列リストで入れると、race_id 一覧を返す。
-    """
     try:
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.common.exceptions import TimeoutException
@@ -263,6 +261,7 @@ def scrape_race_id_list(
                     time.sleep(2)
 
                     found_ids = _extract_race_ids_from_driver(driver)
+                    found_ids = _filter_race_ids_by_kaisai_date(found_ids, kaisai_date)
                     if found_ids:
                         break
 
