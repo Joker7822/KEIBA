@@ -72,14 +72,6 @@ def _normalize_race_ids(race_id_list: Iterable[str]) -> List[str]:
     return sorted({str(x) for x in race_id_list if re.fullmatch(r"\d{12}", str(x))})
 
 
-def _filter_race_ids_by_kaisai_date(race_ids: Iterable[str], kaisai_date: str) -> List[str]:
-    return sorted({
-        str(race_id)
-        for race_id in race_ids
-        if re.fullmatch(r"\d{12}", str(race_id)) and str(race_id).startswith(str(kaisai_date))
-    })
-
-
 def _fetch_html(url: str, *, timeout: int = 30, max_attempt: int = 3, sleep_seconds: float = 1.0) -> bytes:
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempt + 1):
@@ -156,53 +148,55 @@ def _save_race_ids_csv(path: str, race_id_list: Iterable[str]) -> None:
     )
 
 
-def _extract_race_ids_from_html(html: str) -> List[str]:
-    patterns = [
-        r"shutuba\.html\?race_id=(\d{12})",
-        r"result\.html\?race_id=(\d{12})",
-        r"/race/(\d{12})/?",
-        r"race_id=(\d{12})",
-    ]
+def _extract_race_ids_from_race_list_html(html: str) -> List[str]:
+    """
+    race_list.html の「開催レース一覧」本体だけから race_id を抽出する。
+    ページ全体のリンクや script 内文字列は拾わない。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
     race_ids: List[str] = []
-    for pattern in patterns:
+
+    # 最優先: 本体領域から抽出
+    race_bodies = soup.select("div.RaceList_Body")
+    for body in race_bodies:
+        for a in body.select("div.RaceList_Box li.RaceList_DataItem > a[href]"):
+            href = a.get("href", "")
+            # result / shutuba の本体リンクだけ許可
+            if (
+                "./race/result.html?race_id=" in href
+                or "./race/shutuba.html?race_id=" in href
+                or "/race/result.html?race_id=" in href
+                or "/race/shutuba.html?race_id=" in href
+            ):
+                race_ids.extend(re.findall(r"race_id=(\d{12})", href))
+
+    # 本体DOMが取れなかったときの保険
+    if race_ids:
+        return _normalize_race_ids(race_ids)
+
+    fallback_scopes = soup.select("div.RaceList_Box, #RaceTopRace, #race_list")
+    for scope in fallback_scopes:
+        for a in scope.select("a[href*='race_id=']"):
+            href = a.get("href", "")
+            if (
+                "result.html?race_id=" in href
+                or "shutuba.html?race_id=" in href
+            ):
+                race_ids.extend(re.findall(r"race_id=(\d{12})", href))
+
+    if race_ids:
+        return _normalize_race_ids(race_ids)
+
+    # 最終保険: ページ全体からだが、result/shutuba に限定
+    href_patterns = [
+        r"\./race/result\.html\?race_id=(\d{12})",
+        r"\./race/shutuba\.html\?race_id=(\d{12})",
+        r"/race/result\.html\?race_id=(\d{12})",
+        r"/race/shutuba\.html\?race_id=(\d{12})",
+    ]
+    for pattern in href_patterns:
         race_ids.extend(re.findall(pattern, html))
-    return _normalize_race_ids(race_ids)
-
-
-def _extract_race_ids_from_driver(driver) -> List[str]:
-    from selenium.webdriver.common.by import By
-
-    selectors = [
-        ".RaceList_Box a",
-        "[class*='RaceList'] a",
-        "a[href*='shutuba.html?race_id=']",
-        "a[href*='result.html?race_id=']",
-        "a[href*='/race/']",
-    ]
-
-    hrefs: List[str] = []
-    for selector in selectors:
-        try:
-            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-            for elem in elements:
-                href = elem.get_attribute("href") or ""
-                if href:
-                    hrefs.append(href)
-            if hrefs:
-                break
-        except Exception:
-            continue
-
-    if not hrefs:
-        return _extract_race_ids_from_html(driver.page_source)
-
-    race_ids: List[str] = []
-    for href in hrefs:
-        race_ids.extend(re.findall(r"race_id=(\d{12})", href))
-        race_ids.extend(re.findall(r"/race/(\d{12})/?", href))
-
-    if not race_ids:
-        return _extract_race_ids_from_html(driver.page_source)
 
     return _normalize_race_ids(race_ids)
 
@@ -260,8 +254,9 @@ def scrape_race_id_list(
 
                     time.sleep(2)
 
-                    found_ids = _extract_race_ids_from_driver(driver)
-                    found_ids = _filter_race_ids_by_kaisai_date(found_ids, kaisai_date)
+                    page_html = driver.page_source
+                    found_ids = _extract_race_ids_from_race_list_html(page_html)
+
                     if found_ids:
                         break
 
