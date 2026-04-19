@@ -179,6 +179,8 @@ jobs:
       - name: Commit and push generated files
         if: ${{ success() }}
         shell: bash
+        env:
+          RUN_MODE: ${{ steps.range.outputs.run_mode }}
         run: |
           set -euo pipefail
 
@@ -194,7 +196,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore: run main.ipynb (${ { steps.range.outputs.run_mode } })" || true
+          git commit -m "chore: run main.ipynb (${RUN_MODE})"
           git pull --rebase origin "$BRANCH_NAME"
           git push origin "HEAD:${BRANCH_NAME}"
 
