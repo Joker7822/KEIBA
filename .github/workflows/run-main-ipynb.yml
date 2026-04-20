@@ -73,7 +73,7 @@ jobs:
           TO_DATE: ${{ steps.range.outputs.to_date }}
         run: |
           set -euo pipefail
-          mkdir -p data/tmp
+          mkdir -p data/tmp .github/state
 
           python scripts/scrape_race_horse_ped.py \
             --from-date "$FROM_DATE" \
@@ -90,5 +90,6 @@ jobs:
           path: |
             data/tmp/scrape_race_horse_ped.log
             data/tmp/scrape_race_horse_ped_summary.json
+            .github/state/scrape_race_horse_ped_checkpoint.json
           if-no-files-found: warn
           retention-days: 30
