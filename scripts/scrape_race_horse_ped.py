@@ -142,6 +142,21 @@ def normalize_date_string(value: str) -> str:
     raise ValueError(f'Unsupported date format: {value}')
 
 
+def get_candidate_paths(base_dir: Path, item_id: str) -> List[Path]:
+    item_id = str(item_id).strip()
+    return [
+        base_dir / f"{item_id}.bin",
+        base_dir / f"{item_id}.html",
+        base_dir / item_id,
+        base_dir / item_id / "index.html",
+        base_dir / item_id / "index.bin",
+    ]
+
+
+def has_existing_scrape_file(base_dir: Path, item_id: str) -> bool:
+    return any(path.exists() for path in get_candidate_paths(base_dir, item_id))
+
+
 def extract_horse_ids_from_race_file(path: Path) -> List[str]:
     if not path.exists():
         return []
@@ -293,9 +308,9 @@ def main() -> int:
         "resume_race_last_id": checkpoint.get("race_last_id"),
         "resume_horse_last_id": checkpoint.get("horse_last_id"),
         "resume_ped_last_id": checkpoint.get("ped_last_id"),
-        "race": {"attempted": 0, "pushed": 0, "failed": []},
-        "horse": {"attempted": 0, "pushed": 0, "failed": []},
-        "ped": {"attempted": 0, "pushed": 0, "failed": []},
+        "race": {"attempted": 0, "pushed": 0, "skipped_existing": 0, "failed": []},
+        "horse": {"attempted": 0, "pushed": 0, "skipped_existing": 0, "failed": []},
+        "ped": {"attempted": 0, "pushed": 0, "skipped_existing": 0, "failed": []},
     }
     write_summary(summary)
 
@@ -314,6 +329,18 @@ def main() -> int:
         summary["race"]["attempted"] = i
         print(f"[RACE {i}/{len(race_ids)}] {race_id}", flush=True)
         try:
+            if skip_existing and has_existing_scrape_file(RACE_DIR, race_id):
+                summary["race"]["skipped_existing"] += 1
+                update_checkpoint(checkpoint, phase="race", latest_kaisai_date=latest_kaisai_date, item_id=race_id)
+                checkpoint_counter += 1
+                if args.git_push and should_push_checkpoint(checkpoint_counter, last_checkpoint_push_at):
+                    if git_commit_and_push(f"chore: checkpoint race {race_id}", allow_checkpoint_only=True):
+                        checkpoint_counter = 0
+                        last_checkpoint_push_at = time.time()
+                        print(f"[PUSH] checkpoint race {race_id}", flush=True)
+                print(f"[SKIP EXISTING] race {race_id}", flush=True)
+                continue
+
             preparing.scrape_html_race([race_id], skip=skip_existing)
             update_checkpoint(checkpoint, phase="race", latest_kaisai_date=latest_kaisai_date, item_id=race_id)
 
@@ -372,6 +399,18 @@ def main() -> int:
         summary["horse"]["attempted"] = i
         print(f"[HORSE {i}/{len(horse_ids)}] {horse_id}", flush=True)
         try:
+            if skip_existing and has_existing_scrape_file(HORSE_DIR, horse_id):
+                summary["horse"]["skipped_existing"] += 1
+                update_checkpoint(checkpoint, phase="horse", latest_kaisai_date=latest_kaisai_date, item_id=horse_id)
+                checkpoint_counter += 1
+                if args.git_push and should_push_checkpoint(checkpoint_counter, last_checkpoint_push_at):
+                    if git_commit_and_push(f"chore: checkpoint horse {horse_id}", allow_checkpoint_only=True):
+                        checkpoint_counter = 0
+                        last_checkpoint_push_at = time.time()
+                        print(f"[PUSH] checkpoint horse {horse_id}", flush=True)
+                print(f"[SKIP EXISTING] horse {horse_id}", flush=True)
+                continue
+
             preparing.scrape_html_horse_with_master([horse_id], skip=skip_existing)
             update_checkpoint(checkpoint, phase="horse", latest_kaisai_date=latest_kaisai_date, item_id=horse_id)
 
@@ -416,6 +455,18 @@ def main() -> int:
         summary["ped"]["attempted"] = i
         print(f"[PED {i}/{len(horse_ids)}] {horse_id}", flush=True)
         try:
+            if skip_existing and has_existing_scrape_file(PED_DIR, horse_id):
+                summary["ped"]["skipped_existing"] += 1
+                update_checkpoint(checkpoint, phase="ped", latest_kaisai_date=latest_kaisai_date, item_id=horse_id)
+                checkpoint_counter += 1
+                if args.git_push and should_push_checkpoint(checkpoint_counter, last_checkpoint_push_at):
+                    if git_commit_and_push(f"chore: checkpoint ped {horse_id}", allow_checkpoint_only=True):
+                        checkpoint_counter = 0
+                        last_checkpoint_push_at = time.time()
+                        print(f"[PUSH] checkpoint ped {horse_id}", flush=True)
+                print(f"[SKIP EXISTING] ped {horse_id}", flush=True)
+                continue
+
             preparing.scrape_html_ped([horse_id], skip=skip_existing)
             update_checkpoint(checkpoint, phase="ped", latest_kaisai_date=latest_kaisai_date, item_id=horse_id)
 
