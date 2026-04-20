@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import datetime as dt
 import json
 import os
 import re
@@ -8,7 +9,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -102,6 +103,19 @@ def dedupe_keep_order(values: Iterable[str]) -> List[str]:
     return out
 
 
+def normalize_date_string(value: str) -> str:
+    value = str(value).strip()
+    digits = re.sub(r'\D', '', value)
+    if len(digits) == 8:
+        return digits
+    for fmt in ('%Y/%m/%d', '%Y-%m-%d', '%Y%m%d'):
+        try:
+            return dt.datetime.strptime(value, fmt).strftime('%Y%m%d')
+        except ValueError:
+            continue
+    raise ValueError(f'Unsupported date format: {value}')
+
+
 def extract_horse_ids_from_race_file(path: Path) -> List[str]:
     if not path.exists():
         return []
@@ -126,25 +140,35 @@ def write_summary(summary: dict) -> None:
     )
 
 
-def scrape_race_ids(from_date: str, to_date: str) -> List[str]:
+def scrape_race_ids(from_date: str, to_date: str) -> Tuple[List[str], str, int]:
     print(f"[INFO] scrape_kaisai_date: {from_date} -> {to_date}", flush=True)
-    kaisai_dates = preparing.scrape_kaisai_date(from_=from_date, to_=to_date)
-    print(f"[INFO] kaisai_date count = {len(kaisai_dates)}", flush=True)
+    kaisai_dates_raw = preparing.scrape_kaisai_date(from_=from_date, to_=to_date)
+    kaisai_dates = dedupe_keep_order(kaisai_dates_raw)
+    normalized_kaisai_dates = [normalize_date_string(value) for value in kaisai_dates]
+    latest_kaisai_date = max(normalized_kaisai_dates)
+    kaisai_dates_upto_latest = [value for value, normalized in zip(kaisai_dates, normalized_kaisai_dates) if normalized <= latest_kaisai_date]
+
+    print(f"[INFO] kaisai_date count = {len(kaisai_dates_upto_latest)}", flush=True)
+    print(f"[INFO] latest_kaisai_date = {latest_kaisai_date}", flush=True)
 
     print("[INFO] scrape_race_id_list", flush=True)
-    race_ids = preparing.scrape_race_id_list(kaisai_dates)
+    race_ids = preparing.scrape_race_id_list(kaisai_dates_upto_latest)
     race_ids = dedupe_keep_order(race_ids)
     print(f"[INFO] race_id count = {len(race_ids)}", flush=True)
-    return race_ids
+    return race_ids, latest_kaisai_date, len(kaisai_dates_upto_latest)
 
 
 def main() -> int:
     args = parse_args()
     ensure_dirs()
+    skip_existing = not args.overwrite_html
 
     summary = {
         "from_date": args.from_date,
-        "to_date": args.to_date,
+        "to_date_requested": args.to_date,
+        "latest_kaisai_date": None,
+        "kaisai_date_count": 0,
+        "skip_existing_duplicates": skip_existing,
         "overwrite_html": args.overwrite_html,
         "sleep_seconds": args.sleep_seconds,
         "race": {"attempted": 0, "pushed": 0, "failed": []},
@@ -153,7 +177,11 @@ def main() -> int:
     }
     write_summary(summary)
 
-    race_ids = scrape_race_ids(args.from_date, args.to_date)
+    race_ids, latest_kaisai_date, kaisai_date_count = scrape_race_ids(args.from_date, args.to_date)
+    summary["latest_kaisai_date"] = latest_kaisai_date
+    summary["kaisai_date_count"] = kaisai_date_count
+    write_summary(summary)
+
     horse_ids: List[str] = []
 
     for i, race_id in enumerate(race_ids, start=1):
@@ -161,7 +189,7 @@ def main() -> int:
         race_path = RACE_DIR / f"{race_id}.bin"
         print(f"[RACE {i}/{len(race_ids)}] {race_id}", flush=True)
         try:
-            preparing.scrape_html_race([race_id], skip=not args.overwrite_html)
+            preparing.scrape_html_race([race_id], skip=skip_existing)
             horse_ids.extend(extract_horse_ids_from_race_file(race_path))
 
             if args.git_push and git_commit_and_push(f"chore: scrape race html {race_id}"):
@@ -196,7 +224,7 @@ def main() -> int:
         summary["horse"]["attempted"] = i
         print(f"[HORSE {i}/{len(horse_ids)}] {horse_id}", flush=True)
         try:
-            preparing.scrape_html_horse_with_master([horse_id], skip=not args.overwrite_html)
+            preparing.scrape_html_horse_with_master([horse_id], skip=skip_existing)
 
             if args.git_push and git_commit_and_push(f"chore: scrape horse html {horse_id}"):
                 summary["horse"]["pushed"] += 1
@@ -215,7 +243,7 @@ def main() -> int:
         summary["ped"]["attempted"] = i
         print(f"[PED {i}/{len(horse_ids)}] {horse_id}", flush=True)
         try:
-            preparing.scrape_html_ped([horse_id], skip=not args.overwrite_html)
+            preparing.scrape_html_ped([horse_id], skip=skip_existing)
 
             if args.git_push and git_commit_and_push(f"chore: scrape ped html {horse_id}"):
                 summary["ped"]["pushed"] += 1
