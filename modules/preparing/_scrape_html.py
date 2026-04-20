@@ -64,11 +64,20 @@ def _make_soup(html: bytes) -> BeautifulSoup:
         return BeautifulSoup(html, "html.parser")
 
 
-def _normalize_id(raw_id: object) -> str:
-    value = str(raw_id).strip()
-    if value.endswith(".0"):
-        value = value[:-2]
-    return value
+def _normalize_race_id(race_id: str) -> str:
+    s = str(race_id).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return digits.zfill(12)
+
+
+def _normalize_horse_id(horse_id: str) -> str:
+    s = str(horse_id).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    digits = "".join(ch for ch in s if ch.isdigit())
+    return digits.zfill(10)
 
 
 def _is_valid_race_id(race_id: str) -> bool:
@@ -82,15 +91,14 @@ def _is_valid_horse_id(horse_id: str) -> bool:
 def scrape_html_race(race_id_list: list, skip: bool = True):
     """
     netkeiba.comのraceページのhtmlをスクレイピングしてdata/html/raceに保存する関数。
-    skip=Trueにすると、すでにhtmlが存在する場合は再取得せず、その既存ファイルも返り値に含める。
-    skip=Falseにすると再取得して上書きする。
+    skip=Trueにすると、すでにhtmlが存在する場合は再取得しない。
     返り値：利用可能なhtmlのファイルパス（既存 + 新規取得）
     """
     _ensure_dirs()
     html_path_list = []
 
     for race_id in tqdm(race_id_list):
-        race_id = _normalize_id(race_id)
+        race_id = _normalize_race_id(race_id)
 
         if not _is_valid_race_id(race_id):
             print(f"race_id {race_id} skipped. Invalid format.")
@@ -135,14 +143,14 @@ def scrape_html_race(race_id_list: list, skip: bool = True):
 def scrape_html_horse(horse_id_list: list, skip: bool = True):
     """
     netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
-    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
-    返り値：新しくスクレイピングしたhtmlのファイルパス
+    skip=Trueにすると、すでにhtmlが存在する場合は再取得しない。
+    返り値：利用可能なhtmlのファイルパス（既存 + 新規取得）
     """
     _ensure_dirs()
-    updated_html_path_list = []
+    html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
-        horse_id = _normalize_id(horse_id)
+        horse_id = _normalize_horse_id(horse_id)
 
         if not _is_valid_horse_id(horse_id):
             print(f"horse_id {horse_id} skipped. Invalid format.")
@@ -151,7 +159,7 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
         filename = os.path.join(LocalPaths.HTML_HORSE_DIR, horse_id + ".bin")
 
         if skip and os.path.isfile(filename):
-            print(f"horse_id {horse_id} skipped")
+            html_path_list.append(filename)
             continue
 
         url = UrlPaths.HORSE_URL + horse_id
@@ -172,22 +180,22 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
         with open(filename, "wb") as f:
             f.write(html)
 
-        updated_html_path_list.append(filename)
+        html_path_list.append(filename)
 
-    return updated_html_path_list
+    return html_path_list
 
 
 def scrape_html_ped(horse_id_list: list, skip: bool = True):
     """
     netkeiba.comのhorse/pedページのhtmlをスクレイピングしてdata/html/pedに保存する関数。
-    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
-    返り値：新しくスクレイピングしたhtmlのファイルパス
+    skip=Trueにすると、すでにhtmlが存在する場合は再取得しない。
+    返り値：利用可能なhtmlのファイルパス（既存 + 新規取得）
     """
     _ensure_dirs()
-    updated_html_path_list = []
+    html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
-        horse_id = _normalize_id(horse_id)
+        horse_id = _normalize_horse_id(horse_id)
 
         if not _is_valid_horse_id(horse_id):
             print(f"horse_id {horse_id} skipped. Invalid format.")
@@ -196,7 +204,7 @@ def scrape_html_ped(horse_id_list: list, skip: bool = True):
         filename = os.path.join(LocalPaths.HTML_PED_DIR, horse_id + ".bin")
 
         if skip and os.path.isfile(filename):
-            print(f"horse_id {horse_id} skipped")
+            html_path_list.append(filename)
             continue
 
         url = UrlPaths.PED_URL + horse_id
@@ -217,28 +225,29 @@ def scrape_html_ped(horse_id_list: list, skip: bool = True):
         with open(filename, "wb") as f:
             f.write(html)
 
-        updated_html_path_list.append(filename)
+        html_path_list.append(filename)
 
-    return updated_html_path_list
+    return html_path_list
 
 
 def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     """
     netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
-    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
-    返り値：新しくスクレイピングしたhtmlのファイルパス
-    また、horse_idごとに、最後にスクレイピングした日付を記録し、data/master/horse_results_updated_at.csvに保存する。
+    skip=Trueにすると、すでにhtmlが存在する場合は再取得しない。
+    返り値：利用可能なhtmlのファイルパス（既存 + 新規取得）
+    また、horse_idごとに最後にスクレイピングした日付を記録する。
     """
     _ensure_dirs()
 
     print("scraping")
-    updated_html_path_list = scrape_html_horse(horse_id_list, skip)
+    html_path_list = scrape_html_horse(horse_id_list, skip)
 
-    horse_id_list = [
+    updated_horse_ids = [
         re.findall(r"horse\W(\d+).bin", html_path)[0]
-        for html_path in updated_html_path_list
+        for html_path in html_path_list
+        if re.findall(r"horse\W(\d+).bin", html_path)
     ]
-    horse_id_df = pd.DataFrame({"horse_id": horse_id_list})
+    horse_id_df = pd.DataFrame({"horse_id": updated_horse_ids})
 
     print("updating master")
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -251,10 +260,11 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
 
     master = pd.read_csv(LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH, dtype=object)
     new_master = master.merge(horse_id_df, on="horse_id", how="outer")
-    new_master.loc[new_master["horse_id"].isin(horse_id_list), "updated_at"] = now
+    if updated_horse_ids:
+        new_master.loc[new_master["horse_id"].isin(updated_horse_ids), "updated_at"] = now
     new_master[["horse_id", "updated_at"]].to_csv(
         LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
         index=None,
     )
 
-    return updated_html_path_list
+    return html_path_list
