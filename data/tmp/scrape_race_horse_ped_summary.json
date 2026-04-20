@@ -4,8 +4,8 @@
   "overwrite_html": false,
   "sleep_seconds": 1.2,
   "race": {
-    "attempted": 8,
-    "pushed": 8,
+    "attempted": 9,
+    "pushed": 9,
     "failed": []
   },
   "horse": {
