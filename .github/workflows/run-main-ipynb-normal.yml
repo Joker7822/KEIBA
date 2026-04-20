@@ -1,0 +1,179 @@
+name: run-main-ipynb-normal
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_date:
+        description: '開始日を上書きする場合のみ指定 (YYYY/MM/DD)'
+        required: false
+        type: string
+      to_date:
+        description: '終了日を上書きする場合のみ指定 (YYYY/MM/DD)'
+        required: false
+        type: string
+      download_race_html:
+        description: 'race HTML も保存する'
+        required: true
+        default: true
+        type: boolean
+      overwrite_html:
+        description: '既存HTMLも上書き取得する'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-main-ipynb-normal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-main-ipynb-normal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TZ: Asia/Tokyo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Show runner versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python --version
+          google-chrome --version || true
+          chromedriver --version || true
+          echo "TZ=${TZ}"
+          date
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+          pip install "optuna-integration[lightgbm]"
+          pip install lxml nbconvert ipykernel
+
+      - name: Resolve date range
+        id: range
+        shell: bash
+        env:
+          INPUT_FROM: ${{ inputs.from_date }}
+          INPUT_TO: ${{ inputs.to_date }}
+        run: |
+          set -euo pipefail
+          python scripts/resolve_scrape_range.py
+
+          FINAL_FROM_DATE="${{ steps.range.outputs.from_date }}"
+          FINAL_TO_DATE="${{ steps.range.outputs.to_date }}"
+
+          if [ -n "$INPUT_FROM" ]; then
+            FINAL_FROM_DATE="$INPUT_FROM"
+          fi
+
+          if [ -n "$INPUT_TO" ]; then
+            FINAL_TO_DATE="$INPUT_TO"
+          fi
+
+          FROM_DATE_COMPACT="$(printf '%s' "$FINAL_FROM_DATE" | tr -d '/-')"
+          TO_DATE_COMPACT="$(printf '%s' "$FINAL_TO_DATE" | tr -d '/-')"
+
+          {
+            printf 'final_from_date=%s\n' "$FINAL_FROM_DATE"
+            printf 'final_to_date=%s\n' "$FINAL_TO_DATE"
+            printf 'from_date_compact=%s\n' "$FROM_DATE_COMPACT"
+            printf 'to_date_compact=%s\n' "$TO_DATE_COMPACT"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "run_mode=${{ steps.range.outputs.run_mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "from_date=${FINAL_FROM_DATE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "to_date=${FINAL_TO_DATE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "today_jst=${{ steps.range.outputs.today_jst }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "download_race_html=${{ inputs.download_race_html }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "overwrite_html=${{ inputs.overwrite_html }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure git
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Execute main.ipynb normally
+        shell: bash
+        env:
+          SCRAPE_RUN_MODE: ${{ steps.range.outputs.run_mode }}
+          SCRAPE_FROM_DATE: ${{ steps.range.outputs.final_from_date }}
+          SCRAPE_TO_DATE: ${{ steps.range.outputs.final_to_date }}
+          SCRAPE_DOWNLOAD_RACE_HTML: ${{ inputs.download_race_html }}
+          SCRAPE_OVERWRITE_HTML: ${{ inputs.overwrite_html }}
+        run: |
+          set -euo pipefail
+          python -m ipykernel install --user --name python3 || true
+
+          jupyter nbconvert \
+            --to notebook \
+            --execute main.ipynb \
+            --output executed_main.ipynb \
+            --ExecutePreprocessor.timeout=21600
+
+          jupyter nbconvert \
+            --to html executed_main.ipynb \
+            --output executed_main.html
+
+      - name: Write scrape state
+        if: ${{ success() }}
+        shell: bash
+        env:
+          RUN_MODE: ${{ steps.range.outputs.run_mode }}
+          FROM_DATE: ${{ steps.range.outputs.final_from_date }}
+          TO_DATE: ${{ steps.range.outputs.final_to_date }}
+        run: |
+          set -euo pipefail
+          mkdir -p .github/state
+          python scripts/write_scrape_state.py \
+            --run-mode "$RUN_MODE" \
+            --from-date "$FROM_DATE" \
+            --to-date "$TO_DATE"
+
+      - name: Commit and push generated files
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: run main.ipynb normally"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-main-ipynb-normal-${{ steps.range.outputs.from_date_compact || 'na' }}-${{ steps.range.outputs.to_date_compact || 'na' }}
+          path: |
+            executed_main.ipynb
+            executed_main.html
+            .github/state/*
+          if-no-files-found: warn
+          retention-days: 30
