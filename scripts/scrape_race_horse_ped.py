@@ -23,6 +23,11 @@ HORSE_DIR = ROOT_DIR / "data" / "html" / "horse"
 PED_DIR = ROOT_DIR / "data" / "html" / "ped"
 TMP_DIR = ROOT_DIR / "data" / "tmp"
 SUMMARY_PATH = TMP_DIR / "scrape_race_horse_ped_summary.json"
+GIT_COMMIT_TARGETS = [
+    str(RACE_DIR.relative_to(ROOT_DIR)),
+    str(HORSE_DIR.relative_to(ROOT_DIR)),
+    str(PED_DIR.relative_to(ROOT_DIR)),
+]
 
 HORSE_ID_PATTERNS = [
     re.compile(rb'https?://db\.netkeiba\.com/horse/([0-9]{6,12})/?'),
@@ -71,14 +76,14 @@ def ensure_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
-def git_has_changes() -> bool:
-    out = run(["git", "status", "--porcelain"], capture_output=True)
+def git_has_staged_changes() -> bool:
+    out = run(["git", "diff", "--cached", "--name-only"], capture_output=True)
     return bool(out.strip())
 
 
 def git_commit_and_push(message: str) -> bool:
-    run(["git", "add", "-A"])
-    if not git_has_changes():
+    run(["git", "add", *GIT_COMMIT_TARGETS])
+    if not git_has_staged_changes():
         return False
 
     branch = os.getenv("GITHUB_REF_NAME")
