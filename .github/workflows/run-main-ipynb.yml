@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/resolve_scrape_range.py >> "$GITHUB_OUTPUT"
+          python scripts/resolve_scrape_range.py
 
           echo "run_mode=${{ steps.range.outputs.run_mode }}" >> "$GITHUB_STEP_SUMMARY"
           echo "from_date=${{ steps.range.outputs.from_date }}" >> "$GITHUB_STEP_SUMMARY"
