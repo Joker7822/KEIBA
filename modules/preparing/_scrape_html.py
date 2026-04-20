@@ -64,6 +64,13 @@ def _make_soup(html: bytes) -> BeautifulSoup:
         return BeautifulSoup(html, "html.parser")
 
 
+def _normalize_id(raw_id: object) -> str:
+    value = str(raw_id).strip()
+    if value.endswith(".0"):
+        value = value[:-2]
+    return value
+
+
 def _is_valid_race_id(race_id: str) -> bool:
     return bool(re.fullmatch(r"\d{12}", str(race_id)))
 
@@ -75,14 +82,15 @@ def _is_valid_horse_id(horse_id: str) -> bool:
 def scrape_html_race(race_id_list: list, skip: bool = True):
     """
     netkeiba.comのraceページのhtmlをスクレイピングしてdata/html/raceに保存する関数。
-    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
-    返り値：新しくスクレイピングしたhtmlのファイルパス
+    skip=Trueにすると、すでにhtmlが存在する場合は再取得せず、その既存ファイルも返り値に含める。
+    skip=Falseにすると再取得して上書きする。
+    返り値：利用可能なhtmlのファイルパス（既存 + 新規取得）
     """
     _ensure_dirs()
-    updated_html_path_list = []
+    html_path_list = []
 
     for race_id in tqdm(race_id_list):
-        race_id = str(race_id).strip()
+        race_id = _normalize_id(race_id)
 
         if not _is_valid_race_id(race_id):
             print(f"race_id {race_id} skipped. Invalid format.")
@@ -91,7 +99,7 @@ def scrape_html_race(race_id_list: list, skip: bool = True):
         filename = os.path.join(LocalPaths.HTML_RACE_DIR, race_id + ".bin")
 
         if skip and os.path.isfile(filename):
-            print(f"race_id {race_id} skipped")
+            html_path_list.append(filename)
             continue
 
         url = UrlPaths.RACE_URL + race_id
@@ -119,9 +127,9 @@ def scrape_html_race(race_id_list: list, skip: bool = True):
         with open(filename, "wb") as f:
             f.write(html)
 
-        updated_html_path_list.append(filename)
+        html_path_list.append(filename)
 
-    return updated_html_path_list
+    return html_path_list
 
 
 def scrape_html_horse(horse_id_list: list, skip: bool = True):
@@ -134,7 +142,7 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
     updated_html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
-        horse_id = str(horse_id).strip()
+        horse_id = _normalize_id(horse_id)
 
         if not _is_valid_horse_id(horse_id):
             print(f"horse_id {horse_id} skipped. Invalid format.")
@@ -179,7 +187,7 @@ def scrape_html_ped(horse_id_list: list, skip: bool = True):
     updated_html_path_list = []
 
     for horse_id in tqdm(horse_id_list):
-        horse_id = str(horse_id).strip()
+        horse_id = _normalize_id(horse_id)
 
         if not _is_valid_horse_id(horse_id):
             print(f"horse_id {horse_id} skipped. Invalid format.")
