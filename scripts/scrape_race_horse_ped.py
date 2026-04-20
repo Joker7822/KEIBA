@@ -10,10 +10,13 @@ import traceback
 from pathlib import Path
 from typing import Iterable, List
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 from modules import preparing
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
 RACE_DIR = ROOT_DIR / "data" / "html" / "race"
 HORSE_DIR = ROOT_DIR / "data" / "html" / "horse"
 PED_DIR = ROOT_DIR / "data" / "html" / "ped"
