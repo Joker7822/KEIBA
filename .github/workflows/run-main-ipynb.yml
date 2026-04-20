@@ -2,29 +2,6 @@ name: scrape-race-horse-ped
 
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: '実行モード'
-        required: true
-        default: auto
-        type: choice
-        options:
-          - auto
-          - full
-          - incremental
-      from_date:
-        description: '開始日を上書きする場合のみ指定 (YYYY/MM/DD)'
-        required: false
-        type: string
-      to_date:
-        description: '終了日を上書きする場合のみ指定 (YYYY/MM/DD)'
-        required: false
-        type: string
-      overwrite_html:
-        description: '既存HTMLも上書き取得する'
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -75,56 +52,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python scripts/resolve_scrape_range.py >> "$GITHUB_OUTPUT"
 
-          MODE="${{ inputs.mode }}"
-          INPUT_FROM="${{ inputs.from_date }}"
-          INPUT_TO="${{ inputs.to_date }}"
-
-          REAL_GITHUB_OUTPUT="$GITHUB_OUTPUT"
-          TMP_OUTPUT="$(mktemp)"
-          export GITHUB_OUTPUT="$TMP_OUTPUT"
-
-          python scripts/resolve_scrape_range.py --mode "$MODE"
-
-          export GITHUB_OUTPUT="$REAL_GITHUB_OUTPUT"
-
-          AUTO_RUN_MODE="$(grep '^run_mode=' "$TMP_OUTPUT" | head -n1 | cut -d= -f2- || true)"
-          AUTO_FROM_DATE="$(grep '^from_date=' "$TMP_OUTPUT" | head -n1 | cut -d= -f2- || true)"
-          AUTO_TO_DATE="$(grep '^to_date=' "$TMP_OUTPUT" | head -n1 | cut -d= -f2- || true)"
-          INITIAL_DONE="$(grep '^initial_done=' "$TMP_OUTPUT" | head -n1 | cut -d= -f2- || true)"
-          TODAY_JST="$(grep '^today_jst=' "$TMP_OUTPUT" | head -n1 | cut -d= -f2- || true)"
-
-          FINAL_FROM_DATE="$AUTO_FROM_DATE"
-          FINAL_TO_DATE="$AUTO_TO_DATE"
-
-          if [ -n "$INPUT_FROM" ]; then
-            FINAL_FROM_DATE="$INPUT_FROM"
-          fi
-
-          if [ -n "$INPUT_TO" ]; then
-            FINAL_TO_DATE="$INPUT_TO"
-          fi
-
-          FROM_DATE_COMPACT="$(printf '%s' "$FINAL_FROM_DATE" | tr -d '/-')"
-          TO_DATE_COMPACT="$(printf '%s' "$FINAL_TO_DATE" | tr -d '/-')"
-
-          echo "run_mode=${AUTO_RUN_MODE}" >> "$GITHUB_STEP_SUMMARY"
-          echo "from_date=${FINAL_FROM_DATE}" >> "$GITHUB_STEP_SUMMARY"
-          echo "to_date=${FINAL_TO_DATE}" >> "$GITHUB_STEP_SUMMARY"
-          echo "from_date_compact=${FROM_DATE_COMPACT}" >> "$GITHUB_STEP_SUMMARY"
-          echo "to_date_compact=${TO_DATE_COMPACT}" >> "$GITHUB_STEP_SUMMARY"
-          echo "today_jst=${TODAY_JST}" >> "$GITHUB_STEP_SUMMARY"
-          echo "initial_done=${INITIAL_DONE}" >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            printf 'run_mode=%s\n' "$AUTO_RUN_MODE"
-            printf 'from_date=%s\n' "$FINAL_FROM_DATE"
-            printf 'to_date=%s\n' "$FINAL_TO_DATE"
-            printf 'from_date_compact=%s\n' "$FROM_DATE_COMPACT"
-            printf 'to_date_compact=%s\n' "$TO_DATE_COMPACT"
-            printf 'today_jst=%s\n' "$TODAY_JST"
-            printf 'initial_done=%s\n' "$INITIAL_DONE"
-          } >> "$GITHUB_OUTPUT"
+          echo "run_mode=${{ steps.range.outputs.run_mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "from_date=${{ steps.range.outputs.from_date }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "to_date=${{ steps.range.outputs.to_date }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "today_jst=${{ steps.range.outputs.today_jst }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Configure git
         shell: bash
@@ -136,64 +69,26 @@ jobs:
       - name: Scrape only race / horse / ped and push immediately
         shell: bash
         env:
-          RUN_MODE: ${{ steps.range.outputs.run_mode }}
           FROM_DATE: ${{ steps.range.outputs.from_date }}
           TO_DATE: ${{ steps.range.outputs.to_date }}
-          OVERWRITE_HTML: ${{ inputs.overwrite_html }}
         run: |
           set -euo pipefail
           mkdir -p data/tmp
 
-          OVERWRITE_FLAG=""
-          if [ "${OVERWRITE_HTML}" = "true" ]; then
-            OVERWRITE_FLAG="--overwrite-html"
-          fi
-
           python scripts/scrape_race_horse_ped.py \
             --from-date "$FROM_DATE" \
             --to-date "$TO_DATE" \
-            $OVERWRITE_FLAG \
             --sleep-seconds 1.2 \
             --git-push \
             2>&1 | tee data/tmp/scrape_race_horse_ped.log
-
-      - name: Write scrape state
-        if: ${{ success() }}
-        shell: bash
-        env:
-          RUN_MODE: ${{ steps.range.outputs.run_mode }}
-          FROM_DATE: ${{ steps.range.outputs.from_date }}
-          TO_DATE: ${{ steps.range.outputs.to_date }}
-        run: |
-          set -euo pipefail
-          mkdir -p .github/state
-          python scripts/write_scrape_state.py \
-            --run-mode "$RUN_MODE" \
-            --from-date "$FROM_DATE" \
-            --to-date "$TO_DATE"
-
-      - name: Commit and push state files
-        if: ${{ success() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add .github/state
-          if git diff --cached --quiet; then
-            echo "No state changes to commit."
-            exit 0
-          fi
-          git commit -m "chore: update scrape state"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: scrape-race-horse-ped-${{ steps.range.outputs.run_mode || 'unknown' }}-${{ steps.range.outputs.from_date_compact || 'na' }}-${{ steps.range.outputs.to_date_compact || 'na' }}
+          name: scrape-race-horse-ped-${{ steps.range.outputs.from_date_compact || 'na' }}-${{ steps.range.outputs.to_date_compact || 'na' }}
           path: |
             data/tmp/scrape_race_horse_ped.log
             data/tmp/scrape_race_horse_ped_summary.json
-            .github/state/*
           if-no-files-found: warn
           retention-days: 30
