@@ -1,0 +1,147 @@
+name: run-main-notebook-no-scrape
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: run-main-notebook-no-scrape-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-main-notebook-no-scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TZ: Asia/Tokyo
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Show runner versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python --version
+          echo "TZ=${TZ}"
+          date
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+          pip install "optuna-integration[lightgbm]"
+          pip install lxml nbconvert ipykernel
+
+      - name: Build temporary no-scrape notebook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          src_path = Path('main.ipynb')
+          dst_path = Path('main_no_scrape.ipynb')
+
+          skip_sections = {
+              '# 2. データ取得',
+              '# 6. 当日の予想',
+          }
+
+          with src_path.open('r', encoding='utf-8') as f:
+              nb = json.load(f)
+
+          filtered_cells = []
+          current_top_level = None
+
+          for cell in nb.get('cells', []):
+              source_list = cell.get('source', [])
+              source_text = ''.join(source_list).strip()
+              if cell.get('cell_type') == 'markdown' and source_text.startswith('# '):
+                  current_top_level = source_text
+              if current_top_level in skip_sections:
+                  continue
+              filtered_cells.append(cell)
+
+          nb['cells'] = filtered_cells
+
+          with dst_path.open('w', encoding='utf-8') as f:
+              json.dump(nb, f, ensure_ascii=False, indent=1)
+
+          print(f'input_cells={len(json.load(src_path.open("r", encoding="utf-8"))["cells"])}')
+          print(f'output_cells={len(filtered_cells)}')
+          print(f'created={dst_path}')
+          PY
+
+      - name: Validate no scrape calls remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          nb = json.loads(Path('main_no_scrape.ipynb').read_text(encoding='utf-8'))
+          text = '\n'.join(''.join(cell.get('source', [])) for cell in nb.get('cells', []))
+          blocked = [
+              'scrape_kaisai_date',
+              'scrape_race_id_list',
+              'scrape_html_race',
+              'scrape_html_horse_with_master',
+              'scrape_html_ped',
+              'scrape_shutuba_table',
+              'scrape_race_id_race_time_list',
+              'create_active_race_id_list',
+          ]
+          hits = [token for token in blocked if token in text]
+          if hits:
+              raise SystemExit(f'scrape-related code remains: {hits}')
+          print('No scrape-related calls remain in main_no_scrape.ipynb')
+          PY
+
+      - name: Execute temporary notebook
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m ipykernel install --user --name python3 || true
+          jupyter nbconvert \
+            --to notebook \
+            --execute main_no_scrape.ipynb \
+            --output executed_main_no_scrape.ipynb \
+            --ExecutePreprocessor.timeout=21600
+
+      - name: Export HTML
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          jupyter nbconvert \
+            --to html executed_main_no_scrape.ipynb \
+            --output executed_main_no_scrape.html
+
+      - name: Upload artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-main-notebook-no-scrape
+          path: |
+            main_no_scrape.ipynb
+            executed_main_no_scrape.ipynb
+            executed_main_no_scrape.html
+          if-no-files-found: warn
+          retention-days: 30
