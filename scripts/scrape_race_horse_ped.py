@@ -112,7 +112,7 @@ def git_commit_and_push(message: str, *, allow_checkpoint_only: bool) -> bool:
         branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True).strip()
 
     run(["git", "commit", "-m", message])
-    run(["git", "pull", "--rebase", "origin", branch])
+    run(["git", "pull", "--rebase", "--autostash", "origin", branch])
     run(["git", "push", "origin", f"HEAD:{branch}"])
     return True
 
