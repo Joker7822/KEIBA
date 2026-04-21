@@ -2,12 +2,14 @@ from ._scrape_race_id_list import scrape_kaisai_date, scrape_race_id_list
 
 try:
     from ._scrape_html import scrape_html_horse, scrape_html_ped, scrape_html_race, \
-        scrape_html_horse_with_master
+        scrape_html_horse_with_master, scrape_horse_id_list_from_search, scrape_html_horse_from_search
 except ImportError:
     scrape_html_horse = None
     scrape_html_ped = None
     scrape_html_race = None
     scrape_html_horse_with_master = None
+    scrape_horse_id_list_from_search = None
+    scrape_html_horse_from_search = None
 
 try:
     from ._get_rawdata import get_rawdata_horse_results, get_rawdata_horse_info, get_rawdata_info, get_rawdata_peds, \
