@@ -1,0 +1,203 @@
+name: scrape-netkeiba-push-each
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '取得対象'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - race
+          - horse
+          - ped
+      horse_list_url:
+        description: 'Horse list URL'
+        required: true
+        type: string
+        default: 'https://db.sp.netkeiba.com/?pid=horse_list&word=&match=partial_match&sire=&mare=&bms=&trainer=&owner=&breeder=&under_age=2&over_age=none&under_birthmonth=1&over_birthmonth=12&under_birthday=1&over_birthday=31&prize_min=&prize_max=&sort=prize&submit='
+      race_list_url:
+        description: 'Race list URL'
+        required: true
+        type: string
+        default: 'https://db.sp.netkeiba.com/?pid=race_list&word=&start_year=2010&start_mon=none&end_year=2026&end_mon=none&kyori_min=&kyori_max=&sort=date&submit='
+      out_dir:
+        description: '保存先ディレクトリ'
+        required: true
+        type: string
+        default: 'data/netkeiba'
+      sleep:
+        description: 'アクセス間隔（秒）'
+        required: true
+        type: string
+        default: '2.0'
+      timeout:
+        description: 'タイムアウト（秒）'
+        required: true
+        type: string
+        default: '30'
+      detail_driver:
+        description: '詳細ページ取得方式'
+        required: true
+        type: choice
+        default: 'auto'
+        options:
+          - auto
+          - requests
+          - selenium
+      max_list_pages_per_run:
+        description: 'この run で進める一覧ページ数（race/horse 各）'
+        required: true
+        type: string
+        default: '20'
+      max_pushes_per_run:
+        description: 'この run で行う最大 push 回数'
+        required: true
+        type: string
+        default: '50'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scrape-netkeiba-push-each-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scrape-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_netkeiba_scraper.txt
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Collect list pages and push state
+        env:
+          HORSE_LIST_URL: ${{ inputs.horse_list_url }}
+          RACE_LIST_URL: ${{ inputs.race_list_url }}
+          OUT_DIR: ${{ inputs.out_dir }}
+          SLEEP_SEC: ${{ inputs.sleep }}
+          TIMEOUT_SEC: ${{ inputs.timeout }}
+          DETAIL_DRIVER: ${{ inputs.detail_driver }}
+          MAX_LIST_PAGES: ${{ inputs.max_list_pages_per_run }}
+        run: |
+          set -euo pipefail
+          python scrape_netkeiba_all.py \
+            --horse-list-url "$HORSE_LIST_URL" \
+            --race-list-url "$RACE_LIST_URL" \
+            --out-dir "$OUT_DIR" \
+            --sleep "$SLEEP_SEC" \
+            --timeout "$TIMEOUT_SEC" \
+            --detail-driver "$DETAIL_DRIVER" \
+            --max-list-pages "$MAX_LIST_PAGES" \
+            --collect-only
+
+          if [ -n "$(git status --porcelain -- "$OUT_DIR")" ]; then
+            git add "$OUT_DIR"
+            git commit -m "state(netkeiba): collect list pages"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi
+
+      - name: Scrape and push one by one
+        env:
+          TARGET: ${{ inputs.target }}
+          HORSE_LIST_URL: ${{ inputs.horse_list_url }}
+          RACE_LIST_URL: ${{ inputs.race_list_url }}
+          OUT_DIR: ${{ inputs.out_dir }}
+          SLEEP_SEC: ${{ inputs.sleep }}
+          TIMEOUT_SEC: ${{ inputs.timeout }}
+          DETAIL_DRIVER: ${{ inputs.detail_driver }}
+          MAX_PUSHES: ${{ inputs.max_pushes_per_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_one() {
+            local entity="$1"
+            local count=0
+            local extra_args=""
+
+            case "$entity" in
+              race)
+                extra_args="--skip-list-crawl --max-race-details 1 --skip-horse-details --skip-ped"
+                ;;
+              horse)
+                extra_args="--skip-list-crawl --skip-race-details --max-horse-details 1 --skip-ped"
+                ;;
+              ped)
+                extra_args="--skip-list-crawl --skip-race-details --skip-horse-details --max-ped-details 1"
+                ;;
+              *)
+                echo "unknown entity: $entity" >&2
+                exit 1
+                ;;
+            esac
+
+            while [ "$count" -lt "$MAX_PUSHES" ]; do
+              python scrape_netkeiba_all.py \
+                --horse-list-url "$HORSE_LIST_URL" \
+                --race-list-url "$RACE_LIST_URL" \
+                --out-dir "$OUT_DIR" \
+                --sleep "$SLEEP_SEC" \
+                --timeout "$TIMEOUT_SEC" \
+                --detail-driver "$DETAIL_DRIVER" \
+                $extra_args
+
+              if [ -z "$(git status --porcelain -- "$OUT_DIR")" ]; then
+                echo "no more changes for $entity"
+                break
+              fi
+
+              git add "$OUT_DIR"
+              git commit -m "scrape(${entity}): add 1 item"
+              git pull --rebase origin "${GITHUB_REF_NAME}"
+              git push origin HEAD:"${GITHUB_REF_NAME}"
+              count=$((count + 1))
+              echo "pushed ${entity} item count=${count}"
+            done
+          }
+
+          case "$TARGET" in
+            race)
+              run_one race
+              ;;
+            horse)
+              run_one horse
+              ;;
+            ped)
+              run_one ped
+              ;;
+            all)
+              run_one race
+              run_one horse
+              run_one ped
+              ;;
+            *)
+              echo "invalid target: $TARGET" >&2
+              exit 1
+              ;;
+          esac
