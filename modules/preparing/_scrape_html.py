@@ -44,7 +44,17 @@ def _fetch_html(
             request = Request(url, headers=_DEFAULT_HEADERS)
             with urlopen(request, timeout=timeout) as response:
                 return response.read()
-        except (HTTPError, URLError, TimeoutError) as exc:
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code == 403:
+                print(f"fetch blocked for {url}: HTTP Error 403: Forbidden")
+                break
+            if attempt >= max_attempt:
+                break
+            wait = max(0.5, sleep_seconds) * attempt
+            print(f"fetch retry {attempt}/{max_attempt} for {url}: {exc}")
+            time.sleep(wait)
+        except (URLError, TimeoutError) as exc:
             last_error = exc
             if attempt >= max_attempt:
                 break
@@ -178,6 +188,9 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
             html = _fetch_html(url, timeout=30, max_attempt=3, sleep_seconds=1.0)
         except HTTPError as exc:
             print(f"horse_id {horse_id} skipped. HTTPError: {exc.code} {exc.reason}")
+            if exc.code == 403:
+                print("horse scraping stopped because access was blocked (403 Forbidden).")
+                break
             continue
         except URLError as exc:
             print(f"horse_id {horse_id} skipped. URLError: {exc}")
@@ -223,6 +236,9 @@ def scrape_html_ped(horse_id_list: list, skip: bool = True):
             html = _fetch_html(url, timeout=30, max_attempt=3, sleep_seconds=1.0)
         except HTTPError as exc:
             print(f"horse_id {horse_id} skipped. HTTPError: {exc.code} {exc.reason}")
+            if exc.code == 403:
+                print("ped scraping stopped because access was blocked (403 Forbidden).")
+                break
             continue
         except URLError as exc:
             print(f"horse_id {horse_id} skipped. URLError: {exc}")
