@@ -80,6 +80,15 @@ def _normalize_horse_id(horse_id: str) -> str:
     return digits.zfill(10)
 
 
+def _safe_normalize_horse_id(value) -> Optional[str]:
+    if pd.isna(value):
+        return None
+    normalized = _normalize_horse_id(value)
+    if _is_valid_horse_id(normalized):
+        return normalized
+    return None
+
+
 def _is_valid_race_id(race_id: str) -> bool:
     return bool(re.fullmatch(r"\d{12}", str(race_id)))
 
@@ -243,11 +252,13 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     html_path_list = scrape_html_horse(horse_id_list, skip)
 
     updated_horse_ids = [
-        re.findall(r"horse\W(\d+).bin", html_path)[0]
+        _safe_normalize_horse_id(re.findall(r"horse\W(\d+).bin", html_path)[0])
         for html_path in html_path_list
         if re.findall(r"horse\W(\d+).bin", html_path)
     ]
-    horse_id_df = pd.DataFrame({"horse_id": updated_horse_ids})
+    updated_horse_ids = [horse_id for horse_id in updated_horse_ids if horse_id is not None]
+    updated_horse_ids = list(dict.fromkeys(updated_horse_ids))
+    horse_id_df = pd.DataFrame({"horse_id": pd.Series(updated_horse_ids, dtype="string")})
 
     print("updating master")
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -258,11 +269,30 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
             index=None,
         )
 
-    master = pd.read_csv(LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH, dtype=object)
+    master = pd.read_csv(
+        LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
+        dtype={"horse_id": "string", "updated_at": "string"},
+    )
+    if "horse_id" not in master.columns:
+        master["horse_id"] = pd.Series(dtype="string")
+    if "updated_at" not in master.columns:
+        master["updated_at"] = pd.Series(dtype="string")
+
+    master["horse_id"] = master["horse_id"].map(_safe_normalize_horse_id).astype("string")
+    master["updated_at"] = master["updated_at"].astype("string")
+    master = master.dropna(subset=["horse_id"]).drop_duplicates(subset=["horse_id"], keep="last")
+
+    if horse_id_df.empty:
+        master[["horse_id", "updated_at"]].to_csv(
+            LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
+            index=None,
+        )
+        return html_path_list
+
     new_master = master.merge(horse_id_df, on="horse_id", how="outer")
-    if updated_horse_ids:
-        new_master.loc[new_master["horse_id"].isin(updated_horse_ids), "updated_at"] = now
-    new_master[["horse_id", "updated_at"]].to_csv(
+    new_master["updated_at"] = new_master["updated_at"].astype("string")
+    new_master.loc[new_master["horse_id"].isin(updated_horse_ids), "updated_at"] = now
+    new_master[["horse_id", "updated_at"]].drop_duplicates(subset=["horse_id"], keep="last").to_csv(
         LocalPaths.MASTER_RAW_HORSE_RESULTS_PATH,
         index=None,
     )
