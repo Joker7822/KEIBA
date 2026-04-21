@@ -111,9 +111,14 @@ class Config:
     max_list_pages: Optional[int]
     max_race_details: Optional[int]
     max_horse_details: Optional[int]
+    max_ped_details: Optional[int]
     overwrite: bool
     skip_ped: bool
     no_resume: bool
+    collect_only: bool
+    skip_list_crawl: bool
+    skip_race_details: bool
+    skip_horse_details: bool
 
 
 class ProgressStore:
@@ -396,15 +401,10 @@ class NetkeibaScraper:
         done = self.progress.load_lines(f"done_{entity}.txt")
         failed = self.progress.load_lines(f"failed_{entity}.txt")
         ids = list(dict.fromkeys(ids))
-        total_count = len(ids) if max_items is None else min(len(ids), max_items)
 
-        iterator = ids[:total_count]
-        if tqdm is not None:
-            iterator = tqdm(iterator, desc=f"scrape_{entity}")
-
-        saved = 0
+        pending_ids: list[str] = []
         skipped = 0
-        for entity_id in iterator:
+        for entity_id in ids:
             out_path = self._detail_path(entity, entity_id)
             if not self.cfg.overwrite and out_path.exists() and out_path.stat().st_size > 0:
                 skipped += 1
@@ -415,7 +415,19 @@ class NetkeibaScraper:
             if entity_id in done and not self.cfg.overwrite:
                 skipped += 1
                 continue
+            pending_ids.append(entity_id)
 
+        if max_items is not None:
+            pending_ids = pending_ids[:max_items]
+
+        total_count = len(pending_ids)
+        iterator = pending_ids
+        if tqdm is not None and total_count > 1:
+            iterator = tqdm(iterator, desc=f"scrape_{entity}")
+
+        saved = 0
+        for entity_id in iterator:
+            out_path = self._detail_path(entity, entity_id)
             url = self._detail_url(entity, entity_id)
             try:
                 html = self.fetch_html(url, mode="detail")
@@ -437,15 +449,27 @@ class NetkeibaScraper:
 
     def run(self) -> None:
         try:
-            race_ids = self.crawl_list_pages(self.cfg.race_list_url, "race")
-            horse_ids = self.crawl_list_pages(self.cfg.horse_list_url, "horse")
+            if self.cfg.skip_list_crawl:
+                race_ids = self.progress.load_lines("collected_race_ids.txt")
+                horse_ids = self.progress.load_lines("collected_horse_ids.txt")
+            else:
+                race_ids = self.crawl_list_pages(self.cfg.race_list_url, "race")
+                horse_ids = self.crawl_list_pages(self.cfg.horse_list_url, "horse")
 
-            self.save_details("race", sorted(race_ids), max_items=self.cfg.max_race_details)
-            self.save_details("horse", sorted(horse_ids), max_items=self.cfg.max_horse_details)
+            if self.cfg.collect_only:
+                print(f"[COLLECT_ONLY] race_ids={len(race_ids)} horse_ids={len(horse_ids)}")
+                return
+
+            if not self.cfg.skip_race_details:
+                self.save_details("race", sorted(race_ids), max_items=self.cfg.max_race_details)
+
+            if not self.cfg.skip_horse_details:
+                self.save_details("horse", sorted(horse_ids), max_items=self.cfg.max_horse_details)
 
             if not self.cfg.skip_ped:
                 # ped は horse_id と同じ ID を利用
-                self.save_details("ped", sorted(horse_ids), max_items=self.cfg.max_horse_details)
+                ped_max = self.cfg.max_ped_details if self.cfg.max_ped_details is not None else self.cfg.max_horse_details
+                self.save_details("ped", sorted(horse_ids), max_items=ped_max)
         finally:
             if self.list_browser is not None:
                 self.list_browser.quit()
@@ -476,10 +500,15 @@ def parse_args() -> Config:
     parser.add_argument("--no-headless", action="store_false", dest="headless", help="headless 無効")
     parser.add_argument("--max-list-pages", type=int, default=None, help="一覧ページの最大巡回数")
     parser.add_argument("--max-race-details", type=int, default=None, help="race 詳細最大件数")
-    parser.add_argument("--max-horse-details", type=int, default=None, help="horse/ped 詳細最大件数")
+    parser.add_argument("--max-horse-details", type=int, default=None, help="horse 詳細最大件数")
+    parser.add_argument("--max-ped-details", type=int, default=None, help="ped 詳細最大件数")
     parser.add_argument("--overwrite", action="store_true", help="既存HTMLを上書き")
     parser.add_argument("--skip-ped", action="store_true", help="ped 取得をスキップ")
     parser.add_argument("--no-resume", action="store_true", help="再開情報を使わない")
+    parser.add_argument("--collect-only", action="store_true", help="一覧巡回のみ行い、詳細取得しない")
+    parser.add_argument("--skip-list-crawl", action="store_true", help="一覧巡回をスキップし、既存stateの collected_*_ids を使う")
+    parser.add_argument("--skip-race-details", action="store_true", help="race 詳細を取得しない")
+    parser.add_argument("--skip-horse-details", action="store_true", help="horse 詳細を取得しない")
 
     args = parser.parse_args()
 
@@ -495,9 +524,14 @@ def parse_args() -> Config:
         max_list_pages=args.max_list_pages,
         max_race_details=args.max_race_details,
         max_horse_details=args.max_horse_details,
+        max_ped_details=args.max_ped_details,
         overwrite=args.overwrite,
         skip_ped=args.skip_ped,
         no_resume=args.no_resume,
+        collect_only=args.collect_only,
+        skip_list_crawl=args.skip_list_crawl,
+        skip_race_details=args.skip_race_details,
+        skip_horse_details=args.skip_horse_details,
     )
 
 
