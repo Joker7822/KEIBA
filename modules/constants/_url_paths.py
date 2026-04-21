@@ -8,6 +8,10 @@ class UrlPaths:
     RACE_URL: str = DB_DOMAIN + 'race/'
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: str = DB_DOMAIN + 'horse/'
+    # horse一覧・検索系ページ
+    HORSE_SEARCH_ALL_URL: str = HORSE_URL + 'search_all.html'
+    HORSE_SEARCH_DETAIL_URL: str = HORSE_URL + 'search_detail.html'
+    HORSE_LIST_URL: str = HORSE_URL + 'list.html'
     # 血統テーブルが含まれるページ
     PED_URL: str = HORSE_URL + 'ped/'
     
