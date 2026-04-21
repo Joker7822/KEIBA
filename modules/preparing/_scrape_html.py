@@ -66,6 +66,43 @@ def _fetch_html(
     raise last_error
 
 
+def _fetch_html_from_candidates(
+    urls: list[str],
+    *,
+    timeout: int = 30,
+    max_attempt: int = 3,
+    sleep_seconds: float = 1.0,
+) -> bytes:
+    deduped_urls = list(dict.fromkeys([url for url in urls if url]))
+    last_error: Optional[Exception] = None
+    blocked_error: Optional[HTTPError] = None
+
+    for idx, url in enumerate(deduped_urls, start=1):
+        try:
+            return _fetch_html(
+                url,
+                timeout=timeout,
+                max_attempt=max_attempt,
+                sleep_seconds=sleep_seconds,
+            )
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code == 403:
+                blocked_error = exc
+                print(f"candidate blocked {idx}/{len(deduped_urls)} for {url}: HTTP Error 403: Forbidden")
+            else:
+                print(f"candidate fetch failed {idx}/{len(deduped_urls)} for {url}: {exc}")
+        except Exception as exc:
+            last_error = exc
+            print(f"candidate fetch failed {idx}/{len(deduped_urls)} for {url}: {exc}")
+
+    if blocked_error is not None:
+        raise blocked_error
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No candidate URLs were provided.")
+
+
 def _make_soup(html: bytes) -> BeautifulSoup:
     try:
         return BeautifulSoup(html, "lxml")
@@ -105,6 +142,61 @@ def _is_valid_race_id(race_id: str) -> bool:
 
 def _is_valid_horse_id(horse_id: str) -> bool:
     return bool(re.fullmatch(r"\d{10}", str(horse_id)))
+
+
+def _build_horse_detail_urls(horse_id: str) -> list[str]:
+    horse_id = _normalize_horse_id(horse_id)
+    base_url = UrlPaths.HORSE_URL + horse_id
+    return [
+        base_url,
+        base_url + "/",
+    ]
+
+
+def _extract_horse_ids_from_html(html: bytes) -> list[str]:
+    soup = _make_soup(html)
+    horse_ids: list[str] = []
+
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor.get("href", "")).strip()
+        match = re.search(r"/horse/(\d{10})/?", href)
+        if not match:
+            continue
+        horse_id = _normalize_horse_id(match.group(1))
+        if _is_valid_horse_id(horse_id):
+            horse_ids.append(horse_id)
+
+    if horse_ids:
+        return list(dict.fromkeys(horse_ids))
+
+    text = html.decode("utf-8", errors="ignore")
+    horse_ids = [
+        _normalize_horse_id(horse_id)
+        for horse_id in re.findall(r"/horse/(\d{10})/?", text)
+    ]
+    horse_ids = [horse_id for horse_id in horse_ids if _is_valid_horse_id(horse_id)]
+    return list(dict.fromkeys(horse_ids))
+
+
+def scrape_horse_id_list_from_search(search_url: str = UrlPaths.HORSE_SEARCH_ALL_URL) -> list[str]:
+    """
+    horse検索ページからhorse_id一覧を取得する関数。
+    search_urlにはsearch_all.htmlやlist.htmlを含むURLを指定可能。
+    """
+    print(f"scraping horse_id_list from search page: {search_url}")
+    html = _fetch_html(search_url, timeout=30, max_attempt=3, sleep_seconds=1.0)
+    return _extract_horse_ids_from_html(html)
+
+
+def scrape_html_horse_from_search(search_url: str = UrlPaths.HORSE_SEARCH_ALL_URL, skip: bool = True):
+    """
+    horse検索ページからhorse_id一覧を抽出し、そのhorseページhtmlを取得する関数。
+    """
+    horse_id_list = scrape_horse_id_list_from_search(search_url)
+    if not horse_id_list:
+        print(f"No horse IDs found from search page: {search_url}")
+        return []
+    return scrape_html_horse_with_master(horse_id_list, skip=skip)
 
 
 def scrape_html_race(race_id_list: list, skip: bool = True):
@@ -181,11 +273,14 @@ def scrape_html_horse(horse_id_list: list, skip: bool = True):
             html_path_list.append(filename)
             continue
 
-        url = UrlPaths.HORSE_URL + horse_id
-
         try:
             time.sleep(1)
-            html = _fetch_html(url, timeout=30, max_attempt=3, sleep_seconds=1.0)
+            html = _fetch_html_from_candidates(
+                _build_horse_detail_urls(horse_id),
+                timeout=30,
+                max_attempt=3,
+                sleep_seconds=1.0,
+            )
         except HTTPError as exc:
             print(f"horse_id {horse_id} skipped. HTTPError: {exc.code} {exc.reason}")
             if exc.code == 403:
@@ -264,8 +359,23 @@ def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
     """
     _ensure_dirs()
 
+    normalized_horse_ids = []
+    for horse_id in horse_id_list or []:
+        normalized = _safe_normalize_horse_id(horse_id)
+        if normalized is not None:
+            normalized_horse_ids.append(normalized)
+    normalized_horse_ids = list(dict.fromkeys(normalized_horse_ids))
+
+    if not normalized_horse_ids:
+        print("horse_id_list is empty. trying search_all.html to discover horse IDs.")
+        try:
+            normalized_horse_ids = scrape_horse_id_list_from_search(UrlPaths.HORSE_SEARCH_ALL_URL)
+        except Exception as exc:
+            print(f"Failed to discover horse IDs from search page: {exc}")
+            normalized_horse_ids = []
+
     print("scraping")
-    html_path_list = scrape_html_horse(horse_id_list, skip)
+    html_path_list = scrape_html_horse(normalized_horse_ids, skip)
 
     updated_horse_ids = [
         _safe_normalize_horse_id(re.findall(r"horse\W(\d+).bin", html_path)[0])
