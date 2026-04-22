@@ -47,7 +47,7 @@ def _fetch_html(
         except HTTPError as exc:
             last_error = exc
             if exc.code == 403:
-                print(f"fetch blocked for {url}: HTTP Error 403: Forbidden")
+                print(f"fetch blocked for {url} HTTP Error 403: Forbidden")
                 break
             if attempt >= max_attempt:
                 break
@@ -89,7 +89,7 @@ def _fetch_html_from_candidates(
             last_error = exc
             if exc.code == 403:
                 blocked_error = exc
-                print(f"candidate blocked {idx}/{len(deduped_urls)} for {url}: HTTP Error 403: Forbidden")
+                print(f"candidate blocked {idx}/{len(deduped_urls)} for {url} HTTP Error 403: Forbidden")
             else:
                 print(f"candidate fetch failed {idx}/{len(deduped_urls)} for {url}: {exc}")
         except Exception as exc:
