@@ -3,9 +3,9 @@
   "from_date": "2010/01/01",
   "to_date_requested": "2026/04/22",
   "latest_kaisai_date": "20260419",
-  "phase": "horse",
-  "race_last_id": "201310010212",
+  "phase": "race",
+  "race_last_id": "201001010503",
   "horse_last_id": "2008106631",
   "ped_last_id": null,
-  "updated_at": "2026-04-22T10:06:33.740924+09:00"
+  "updated_at": "2026-04-22T10:52:10.335680+09:00"
 }
